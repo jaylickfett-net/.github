@@ -1,8 +1,15 @@
 # .github
 
-Shared GitHub Actions workflows for the `jaylickfett-net` org and the `lickfett` account. It is
-public because a private reusable workflow can only be called by repos with the same owner, and
-these repos span two owners. It holds no secrets and no product code.
+Shared GitHub defaults and workflows for the `jaylickfett-net` org. It is public because default
+community health files must come from a public `.github` repo, and so that repos outside the org
+(the `lickfett` account) can still call the workflow. It holds no secrets and no product code.
+
+## Default PR template
+
+[`.github/pull_request_template.md`](.github/pull_request_template.md) is the **default pull request
+template for every `jaylickfett-net` repo** that has none of its own (GitHub's default community health
+files, which is why this repo must stay public). It asks which docs the change makes untrue
+(ADR-0007, layer 1). A repo with its own template, such as the architecture repo, uses that instead.
 
 ## `doc-impact.yml`
 
