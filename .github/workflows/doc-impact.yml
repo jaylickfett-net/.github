@@ -1,0 +1,94 @@
+# Reusable doc-impact check (ADR-0007 §3, layer 2).
+#
+# Fails a pull request that changes a sensitive path without also changing the repo's service sheet,
+# unless the PR carries the skip label. "Sensitive" means a path whose change usually makes the sheet
+# untrue: security config, runtime config, migrations, the API surface, the deploy workflow.
+#
+# Call it from each repo:
+#
+#   on:
+#     pull_request:
+#       types: [opened, synchronize, reopened, labeled, unlabeled]
+#   jobs:
+#     doc-impact:
+#       uses: jaylickfett-net/.github/.github/workflows/doc-impact.yml@v1
+#       with:
+#         sensitive-paths: |
+#           src/main/resources/application*.yml
+#           src/main/java/**/config/**
+#
+# Paths are git glob pathspecs, one per line; `**` matches across directories.
+name: doc-impact
+
+on:
+  workflow_call:
+    inputs:
+      sensitive-paths:
+        description: Newline-separated glob pathspecs whose change requires a sheet update.
+        type: string
+        required: true
+      sheet-path:
+        description: The service sheet that must change alongside them.
+        type: string
+        default: docs/service-sheet.md
+      skip-label:
+        description: A PR label that waives the check, stating the change makes no doc untrue.
+        type: string
+        default: no-doc-impact
+
+permissions:
+  contents: read
+
+jobs:
+  doc-impact:
+    name: Docs this change makes untrue
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check sensitive paths against the service sheet
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          SENSITIVE: ${{ inputs.sensitive-paths }}
+          SHEET: ${{ inputs.sheet-path }}
+          SKIP_LABEL: ${{ inputs.skip-label }}
+          SKIPPED: ${{ contains(github.event.pull_request.labels.*.name, inputs.skip-label) }}
+        run: |
+          set -euo pipefail
+          specs=()
+          while IFS= read -r line; do
+            line="${line%%#*}"; line="$(echo "$line" | xargs)"
+            [ -n "$line" ] && specs+=(":(glob)$line")
+          done <<< "$SENSITIVE"
+          if [ ${#specs[@]} -eq 0 ]; then
+            echo "::error::No sensitive-paths configured."; exit 1
+          fi
+
+          mapfile -t hits < <(git diff --name-only "$BASE...$HEAD" -- "${specs[@]}")
+          sheet_changed=$(git diff --name-only "$BASE...$HEAD" -- "$SHEET" | wc -l)
+
+          {
+            echo "### Doc impact"
+            if [ ${#hits[@]} -eq 0 ]; then
+              echo "No sensitive paths changed."
+            else
+              echo "Sensitive paths changed:"; printf -- '- `%s`\n' "${hits[@]}"
+              echo; echo "Service sheet \`$SHEET\` changed: $([ "$sheet_changed" -gt 0 ] && echo yes || echo no)."
+              echo "Label \`$SKIP_LABEL\`: $([ "$SKIPPED" = true ] && echo present || echo absent)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ ${#hits[@]} -eq 0 ] || [ "$sheet_changed" -gt 0 ]; then
+            exit 0
+          fi
+          if [ "$SKIPPED" = true ]; then
+            echo "::notice::Sensitive paths changed without a sheet update; waived by the '$SKIP_LABEL' label."
+            exit 0
+          fi
+          for f in "${hits[@]}"; do echo "::error file=$f::$f changed, but $SHEET did not."; done
+          echo "::error::Update $SHEET for what this change makes untrue, or add the '$SKIP_LABEL' label and say why in the PR."
+          exit 1
